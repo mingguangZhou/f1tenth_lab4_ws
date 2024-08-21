@@ -13,19 +13,33 @@ class ReactiveFollowGap : public rclcpp::Node {
 public:
     ReactiveFollowGap() : Node("reactive_node")
     {
-        /// TODO: create ROS subscribers and publishers
+        /// create ROS subscribers and publishers
+        scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+                "scan", 10, std::bind(&ReactiveFollowGap::scan_callback, this, std::placeholders::_1));
+        odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                "ego_racecar/odom", 10, std::bind(&ReactiveFollowGap::drive_callback, this, std::placeholders::_1));
+        drive_publisher_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("drive", 10);
+        RCLCPP_INFO(this->get_logger(), "Reactive Node has been started");
     }
 
 private:
-    std::string lidarscan_topic = "/scan";
-    std::string drive_topic = "/drive";
-    /// TODO: create ROS subscribers and publishers
+    /// create ROS subscribers and publishers
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
+    rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_publisher_;
+    
 
     void preprocess_lidar(float* ranges)
     {   
         // Preprocess the LiDAR scan array. Expert implementation includes:
         // 1.Setting each value to the mean over some window
         // 2.Rejecting high values (eg. > 3m)
+
+        /// TODO:
+        // Check if the range value is NaN or infinity, if so convert to 0.0
+        // average each 5 beams for now to clean up noise
+        // set up 'bubbles' for the closest point
+
         return;
     }
 
