@@ -23,6 +23,9 @@ public:
     }
 
 private:
+    double veh_half_width = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
+
+
     /// create ROS subscribers and publishers
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
@@ -35,10 +38,37 @@ private:
         // 1.Setting each value to the mean over some window
         // 2.Rejecting high values (eg. > 3m)
 
-        /// TODO:
-        // Check if the range value is NaN or infinity, if so convert to 0.0
-        // average each 5 beams for now to clean up noise
-        // set up 'bubbles' for the closest point
+        // Proprocessing to average every 5 beams
+        int size = ranges.size();
+
+        // Step 1: Convert NaNs and infinity values to 0.0
+        for (int i = 0; i < size; ++i) {
+            if (std::isnan(ranges[i]) || std::isinf(ranges[i])) {
+                ranges[i] = 0.0f;
+            }
+        }
+
+        // Step 2: Average each 5 beams, ignoring 0.0 values, and replace all 5 beams with the average
+        for (int i = 0; i < size; i += 5) {
+            float sum = 0.0f;
+            int count = 0;
+            
+            // Calculate the sum and count of non-zero values in the group
+            for (int j = i; j < i + 5 && j < size; ++j) {
+                if (ranges[j] != 0.0f) {
+                    sum += ranges[j];
+                    ++count;
+                }
+            }
+            
+            // Compute the average, if there are non-zero values
+            float average = (count > 0) ? sum / count : 0.0f;
+            
+            // Replace all values in the current group with the average
+            for (size_t j = i; j < i + 5 && j < size; ++j) {
+                ranges[j] = average;
+            }
+        }
 
         return;
     }
