@@ -118,12 +118,22 @@ private:
         }
     }
 
-    void find_best_point(float* ranges, int* indice)
+    int find_best_point(float* ranges, int* indice)
     {   
         // Start_i & end_i are start and end indicies of max-gap range, respectively
         // Return index of best point in ranges
 	    // Naive: Choose the furthest point within ranges and go there
-        return;
+        float max_dist = ranges[indice[0]];
+        int max_dist_index = indice[0];
+
+        for (int i = indice[0]+1; i <= indice[1]; i++) {
+            if (ranges[i] > max_dist) {
+                max_dist = ranges[i];
+                max_dist_index = i;
+            }
+        }
+        
+        return max_dist_index;
     }
 
 
