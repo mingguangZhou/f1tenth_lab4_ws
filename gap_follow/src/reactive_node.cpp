@@ -69,8 +69,6 @@ private:
                 ranges[j] = average;
             }
         }
-
-        return;
     }
 
     void find_max_gap(float* ranges, int* indice, float angle_increment_rad)
@@ -95,8 +93,29 @@ private:
             ranges[i] = 0.0f;
         }
 
-        // Return the start index & end index of the max gap in free_space_ranges
-        return;
+        // find the longest gap range
+        int gap_1_lb = 0;
+        int gap_1_rb = min_index - bubble_range_index - 1;
+        while (ranges[gap_1_rb]==0.0f && gap_1_rb > gap_1_lb) {
+           gap_1_rb--; 
+        }
+        
+        int gap_2_rb = size - 1;
+        int gap_2_lb = min_index + bubble_range_index + 1;
+        while (ranges[gap_2_lb]==0.0f && gap_1_rb<gap_1_lb) {
+           gap_2_lb++; 
+        }
+
+        int gap_1_len = gap_1_rb - gap_1_lb;
+        int gap_2_len = gap_2_rb - gap_2_lb;
+
+        if (gap_2_len > gap_1_len) {
+            indice[0] = gap_2_lb;
+            indice[1] = gap_2_rb;
+        } else {
+            indice[0] = gap_1_lb;
+            indice[1] = gap_1_rb;
+        }
     }
 
     void find_best_point(float* ranges, int* indice)
