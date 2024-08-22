@@ -23,7 +23,7 @@ public:
     }
 
 private:
-    double veh_half_width = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
+    float veh_half_width_ = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
 
 
     /// create ROS subscribers and publishers
@@ -65,7 +65,7 @@ private:
             float average = (count > 0) ? sum / count : 0.0f;
             
             // Replace all values in the current group with the average
-            for (size_t j = i; j < i + 5 && j < size; ++j) {
+            for (int j = i; j < i + 5 && j < size; ++j) {
                 ranges[j] = average;
             }
         }
@@ -73,8 +73,28 @@ private:
         return;
     }
 
-    void find_max_gap(float* ranges, int* indice)
+    void find_max_gap(float* ranges, int* indice, float angle_increment_rad)
     {   
+        // find the closest point
+        float min_value = ranges[0];
+        int min_index = 0;
+        int size = ranges.size();
+
+        for (int i = 1; i < size; i++) {
+            if (ranges[i] < min_value) {
+                min_value = ranges[i];
+                min_index = i;
+            }
+        }
+
+        // create the 'bubble' around
+        float bubble_ang_rad = atan2f(veh_half_width_,min_value);
+        int bubble_range_index = static_cast<int>(bubble_ang_rad / angle_increment_rad);
+
+        for (int i = min_index-bubble_range_index; i <= min_index+bubble_range_index && i < size; ++!) {
+            ranges[i] = 0.0f;
+        }
+
         // Return the start index & end index of the max gap in free_space_ranges
         return;
     }
