@@ -6,9 +6,11 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 /// CHECK: include needed ROS msg type headers and libraries
 
+// to facilitate more intuitive and readable expressions for time durations
+using namespace std::chrono_literals;
+
 class ReactiveFollowGap : public rclcpp::Node {
 // Implement Reactive Follow Gap on the car
-// This is just a template, you are free to implement your own node!
 
 public:
     ReactiveFollowGap() : Node("reactive_node")
@@ -19,17 +21,31 @@ public:
         odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
                 "ego_racecar/odom", 10, std::bind(&ReactiveFollowGap::drive_callback, this, std::placeholders::_1));
         drive_publisher_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("drive", 10);
+
+        // Timer for control function at 10Hz
+        timer_ = this->create_wall_timer(100ms, std::bind(&ReactiveFollowGap::control_callback, this));
+
         RCLCPP_INFO(this->get_logger(), "Reactive Node has been started");
     }
 
 private:
     float veh_half_width_ = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
-
+    double dt = 0.1;
+    double speed_curr = 0.0;
 
     /// create ROS subscribers and publishers
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_publisher_;
+
+    // Timer for control callback
+    rclcpp::TimerBase::SharedPtr timer_;
+
+    // Mutex to protect access to the latest scan data
+    std::mutex scan_mutex_;
+    
+    // Variable to store the latest scan data
+    sensor_msgs::msg::LaserScan latest_scan_;
     
 
     void preprocess_lidar(float* ranges)
@@ -136,12 +152,35 @@ private:
         return max_dist_index;
     }
 
+    void control_command(float angle_error, double speed, double time_diff)
+    {
+        // Based on the calculated error, publish vehicle control
+    }
+
+
+    void drive_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
+    {
+        /// update current speed
+        speed_curr = msg->twist.twist.linear.x;
+    }
+
 
     void lidar_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
     {   
+        // Store the latest scan data
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+        latest_scan_ = *scan_msg;
+    }
+
+
+    void control_callback()
+    {
+        // Lock the mutex to safely access the latest scan data
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+    
+        // With fixed rate
         // Process each LiDAR scan as per the Follow Gap algorithm & publish an AckermannDriveStamped Message
 
-        /// TODO:
         // Find closest point to LiDAR
 
         // Eliminate all points inside 'bubble' (set them to zero) 
@@ -151,6 +190,22 @@ private:
         // Find the best point in the gap 
 
         // Publish Drive message
+
+        if (!latest_scan_.ranges.empty())
+        {
+            preprocess_lidar(latest_scan_.ranges);
+            int gap_indice[2] = {0, latest_scan_.ranges.size()};
+            // Find max length gap 
+            find_max_gap(latest_scan_.ranges, gap_indice, latest_scan_.angle_increment);
+            // Find the best point in the gap
+            int goal_index = find_best_point(latest_scan_.ranges, gap_indice);
+            
+            ///TODO: get the error between vehicle heading and goal direction
+            float delta_theta;
+            // Publish Drive message
+            control_command(delta_theta, speed_curr, dt)
+        }
+
     }
 
 
