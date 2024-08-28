@@ -29,7 +29,8 @@ public:
     }
 
 private:
-    float veh_half_width_ = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
+    double veh_half_width_ = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
+    double veh_wheelbase_ = 0.32; //
     double dt = 0.1;
     double speed_curr = 0.0;
 
@@ -102,7 +103,7 @@ private:
         }
 
         // create the 'bubble' around
-        float bubble_ang_rad = atan2f(veh_half_width_,min_value);
+        float bubble_ang_rad = atan2f(static_cast<float>(veh_half_width_),min_value);
         int bubble_range_index = static_cast<int>(bubble_ang_rad / angle_increment_rad);
 
         for (int i = min_index-bubble_range_index; i <= min_index+bubble_range_index && i < size; ++!) {
@@ -155,6 +156,27 @@ private:
     void control_command(float angle_error, double speed, double time_diff)
     {
         // Based on the calculated error, publish vehicle control
+        double yaw_rate_desired = static_cast<double>(angle_error) / time_diff;
+        double steering_angle = (speed > 0.0) ? atan(yaw_rate_desired * veh_wheelbase_ / speed) : 0.0;
+        double angle_deg = steering_angle * (180.0 / M_PI);
+        
+        // generate desired velocity from steering angle
+        double velocity;
+        if (fabs(angle_deg)>=0.0 && fabs(angle_deg)<=10.0) {
+            velocity = 1.5;
+        } else if (fabs(angle_deg)>10.0 && fabs(angle_deg)<=20.0) {
+            velocity = 1.0;
+        } else {
+            velocity = 0.5;
+        }
+
+        auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
+        // fill in drive message and publish
+        drive_msg.drive.speed = static_cast<float>(velocity);
+        drive_msg.drive.steering_angle = static_cast<float>(steering_angle);
+        // drive_msg.drive.steering_angle = 0.0;
+        drive_publisher_ ->publish(drive_msg);
+        RCLCPP_INFO(this->get_logger(), "steering command: %f [deg]", angle_deg);
     }
 
 
@@ -200,8 +222,10 @@ private:
             // Find the best point in the gap
             int goal_index = find_best_point(latest_scan_.ranges, gap_indice);
             
-            ///TODO: get the error between vehicle heading and goal direction
-            float delta_theta;
+            // Get the error between vehicle heading and goal direction
+            float delta_theta = latest_scan_.ranges[goal_index];
+            RCLCPP_INFO(this->get_logger(), "goal angel: %f [deg]", delta_theta * (180 / M_PI));
+
             // Publish Drive message
             control_command(delta_theta, speed_curr, dt)
         }
