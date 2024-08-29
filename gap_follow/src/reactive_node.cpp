@@ -49,7 +49,7 @@ private:
     sensor_msgs::msg::LaserScan latest_scan_;
     
 
-    void preprocess_lidar(float* ranges)
+    void preprocess_lidar(std::vector<float>& ranges)
     {   
         // Preprocess the LiDAR scan array. Expert implementation includes:
         // 1.Setting each value to the mean over some window
@@ -88,7 +88,7 @@ private:
         }
     }
 
-    void find_max_gap(float* ranges, int* indice, float angle_increment_rad)
+    void find_max_gap(std::vector<float>& ranges, int* indice, float angle_increment_rad)
     {   
         // find the closest point
         float min_value = ranges[0];
@@ -106,7 +106,7 @@ private:
         float bubble_ang_rad = atan2f(static_cast<float>(veh_half_width_),min_value);
         int bubble_range_index = static_cast<int>(bubble_ang_rad / angle_increment_rad);
 
-        for (int i = min_index-bubble_range_index; i <= min_index+bubble_range_index && i < size; ++!) {
+        for (int i = min_index-bubble_range_index; i <= min_index+bubble_range_index && i < size; ++i) {
             ranges[i] = 0.0f;
         }
 
@@ -135,7 +135,7 @@ private:
         }
     }
 
-    int find_best_point(float* ranges, int* indice)
+    int find_best_point(std::vector<float>& ranges, int* indice)
     {   
         // Start_i & end_i are start and end indicies of max-gap range, respectively
         // Return index of best point in ranges
@@ -177,6 +177,7 @@ private:
         // drive_msg.drive.steering_angle = 0.0;
         drive_publisher_ ->publish(drive_msg);
         RCLCPP_INFO(this->get_logger(), "steering command: %f [deg]", angle_deg);
+        RCLCPP_INFO(this->get_logger(), "speed command: %f m/s", velocity);
     }
 
 
@@ -187,7 +188,7 @@ private:
     }
 
 
-    void lidar_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
+    void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
     {   
         // Store the latest scan data
         std::lock_guard<std::mutex> lock(scan_mutex_);
@@ -216,25 +217,24 @@ private:
         if (!latest_scan_.ranges.empty())
         {
             preprocess_lidar(latest_scan_.ranges);
-            int gap_indice[2] = {0, latest_scan_.ranges.size()};
+            int gap_indice[2] = {0, static_cast<int>(latest_scan_.ranges.size())};
             // Find max length gap 
             find_max_gap(latest_scan_.ranges, gap_indice, latest_scan_.angle_increment);
             // Find the best point in the gap
             int goal_index = find_best_point(latest_scan_.ranges, gap_indice);
             
             // Get the error between vehicle heading and goal direction
-            float delta_theta = latest_scan_.ranges[goal_index];
+            float delta_theta = latest_scan_.angle_min + goal_index * latest_scan_.angle_increment;
             RCLCPP_INFO(this->get_logger(), "goal angel: %f [deg]", delta_theta * (180 / M_PI));
 
             // Publish Drive message
-            control_command(delta_theta, speed_curr, dt)
+            control_command(delta_theta, speed_curr, dt);
         }
 
     }
-
-
-
 };
+
+
 int main(int argc, char ** argv) {
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<ReactiveFollowGap>());
