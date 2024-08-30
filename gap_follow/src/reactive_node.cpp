@@ -26,6 +26,18 @@ public:
         timer_ = this->create_wall_timer(100ms, std::bind(&ReactiveFollowGap::control_callback, this));
 
         RCLCPP_INFO(this->get_logger(), "Reactive Node has been started");
+
+        // Declare parameters with default values
+        this->declare_parameter<double>("kp", 0.0);
+        this->declare_parameter<double>("ki", 0.0);
+        this->declare_parameter<double>("kd", 0.0);
+
+        // Get parameters from the parameter server (YAML file)
+        kp_ = this->get_parameter("kp").as_double();
+        ki_ = this->get_parameter("ki").as_double();
+        kd_ = this->get_parameter("kd").as_double();
+
+        RCLCPP_INFO(this->get_logger(), "PID parameters loaded: kp=%f, ki=%f, kd=%f", kp_, ki_, kd_);
     }
 
 private:
@@ -33,6 +45,14 @@ private:
     double veh_wheelbase_ = 0.32; //
     double dt = 0.1;
     double speed_curr = 0.0;
+
+    // PID CONTROL PARAMS
+    double kp_;
+    double ki_;
+    double kd_;
+
+    double prev_error = 0.0;
+    double integral = 0.0;
 
     /// create ROS subscribers and publishers
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
@@ -155,9 +175,17 @@ private:
 
     void control_command(float angle_error, double speed, double time_diff)
     {
+        // Simple logging for debugging
+        RCLCPP_INFO(this->get_logger(), "Entering control_command");
+        
         // Based on the calculated error, publish vehicle control
-        double yaw_rate_desired = static_cast<double>(angle_error) / time_diff;
-        double steering_angle = (speed > 0.0) ? atan(yaw_rate_desired * veh_wheelbase_ / speed) : 0.0;
+        // double yaw_rate_desired = static_cast<double>(angle_error);
+        // double steering_angle = (speed > 0.0) ? atan(yaw_rate_desired * veh_wheelbase_ / speed) : 0.0;
+        // double steering_angle = yaw_rate_desired;
+
+        // Using PID to generate steering angle command
+        double steering_angle = kp_ * angle_error + ki_ * integral + kd_ * (angle_error - prev_error) / time_diff;
+
         double angle_deg = steering_angle * (180.0 / M_PI);
         
         // generate desired velocity from steering angle
@@ -178,6 +206,9 @@ private:
         drive_publisher_ ->publish(drive_msg);
         RCLCPP_INFO(this->get_logger(), "steering command: %f [deg]", angle_deg);
         RCLCPP_INFO(this->get_logger(), "speed command: %f m/s", velocity);
+
+        integral += angle_error * dt;
+        prev_error = angle_error;
     }
 
 
