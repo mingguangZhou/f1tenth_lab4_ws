@@ -1,5 +1,0 @@
-reactive_node:
-  ros__parameters:
-    kp: 2.0
-    ki: 0.0
-    kd: 0.1

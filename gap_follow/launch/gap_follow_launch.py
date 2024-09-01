@@ -5,7 +5,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     package_share_dir = get_package_share_directory('gap_follow')
-    config_file = os.path.join(package_share_dir, 'config', 'pid_params.yaml')
+    config_file = os.path.join(package_share_dir, 'config', 'params.yaml')
 
     return LaunchDescription([
         Node(
