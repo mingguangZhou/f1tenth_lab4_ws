@@ -234,11 +234,41 @@ private:
         }
     }
 
-    void control_command(float angle_error, double time_diff)
+    bool side_protection(std::vector<float>& ranges, float angle_min, float angle_increment)
     {
-        // Simple logging for debugging
-        RCLCPP_INFO(this->get_logger(), "Entering control_command");
-        
+        // set up a scan angels array
+        int size = ranges.size();
+        std::vector<float> scan_angles(size);
+        for (int i = 0; i < size; ++i) 
+        {
+            scan_angles[i] = angle_min + i * angle_increment;
+        }
+
+        for (int i = 0; scan_angles[i]<(-M_PI/2); i++) 
+        {
+            if (!std::isnan(ranges[i]) && (ranges[i]>0.0) && (ranges[i] <= side_limit_m_)) 
+            {
+                RCLCPP_INFO(this->get_logger(), "Too close at %f [deg] with dist %f [m]", 
+                            scan_angles[i]*(180.0 / M_PI), ranges[i]);
+                return true;
+            }
+        }
+
+        for (int j = size - 1; scan_angles[j]>(M_PI/2); j--) 
+        {
+            if (!std::isnan(ranges[j]) && (ranges[j]>0.0) && (ranges[j] <= side_limit_m_))
+            {
+                RCLCPP_INFO(this->get_logger(), "Too close at %f [deg] with dist %f [m]", 
+                            scan_angles[j]*(180.0 / M_PI), ranges[j]);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void control_command(float angle_error, double time_diff, bool side_protect_need)
+    {   
         // Based on the calculated error, publish vehicle control
         // double yaw_rate_desired = static_cast<double>(angle_error);
         // double steering_angle = (speed > 0.0) ? atan(yaw_rate_desired * veh_wheelbase_ / speed) : 0.0;
@@ -264,10 +294,16 @@ private:
         auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
         // fill in drive message and publish
         drive_msg.drive.speed = static_cast<float>(velocity);
-        drive_msg.drive.steering_angle = static_cast<float>(steering_angle);
-        // drive_msg.drive.steering_angle = 0.0;
+        if (side_protect_need)
+        {
+            drive_msg.drive.steering_angle = 0.0;
+            RCLCPP_INFO(this->get_logger(), "side protection on, no steering!");
+        } else {
+            drive_msg.drive.steering_angle = static_cast<float>(steering_angle);
+            RCLCPP_INFO(this->get_logger(), "steering command: %f [deg]", angle_deg);
+        }
         drive_publisher_ ->publish(drive_msg);
-        RCLCPP_INFO(this->get_logger(), "steering command: %f [deg]", angle_deg);
+        
         RCLCPP_INFO(this->get_logger(), "speed command: %f m/s", velocity);
 
         integral += angle_error * dt;
@@ -323,13 +359,14 @@ private:
             RCLCPP_INFO(this->get_logger(), "goal angel: %f [deg]", delta_theta * (180 / M_PI));
 
             // Publish Drive message
-            control_command(delta_theta, dt);
+            bool activate_side_protect = side_protection(latest_scan_.ranges, latest_scan_.angle_min,
+                                                         latest_scan_.angle_increment);
+            control_command(delta_theta, dt, activate_side_protect);
         } else {
             auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
             drive_msg.drive.speed = 0.0;
             drive_msg.drive.steering_angle = 0.0;
             drive_publisher_ ->publish(drive_msg);
-            RCLCPP_INFO(this->get_logger(), "AEB Activated");
             AEB_on_ = true;
         }
 
