@@ -5,6 +5,12 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 /// CHECK: include needed ROS msg type headers and libraries
+#include <algorithm>
+
+template <typename T>
+T clamp(T value, T min, T max) {
+    return (value < min) ? min : (value > max) ? max : value;
+}
 
 // to facilitate more intuitive and readable expressions for time durations
 using namespace std::chrono_literals;
@@ -22,8 +28,8 @@ public:
                 "ego_racecar/odom", 10, std::bind(&ReactiveFollowGap::drive_callback, this, std::placeholders::_1));
         drive_publisher_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("drive", 10);
 
-        // Timer for control function at 10Hz
-        timer_ = this->create_wall_timer(100ms, std::bind(&ReactiveFollowGap::control_callback, this));
+        // Timer for control function at 20Hz
+        timer_ = this->create_wall_timer(50ms, std::bind(&ReactiveFollowGap::control_callback, this));
 
         RCLCPP_INFO(this->get_logger(), "Reactive Node has been started");
 
@@ -49,12 +55,14 @@ public:
     }
 
 private:
+    // flags
+    bool scan_received_ = false;
+    bool AEB_on_ = false; 
+
     double veh_half_width_ = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
     double veh_wheelbase_ = 0.32; //
-    double dt = 0.1;
+    double dt = 0.05;
     double speed_curr = 0.0;
-
-    bool AEB_on_ = false; // AEB flag
 
     // PID CONTROL PARAMS
     double kp_;
@@ -89,12 +97,15 @@ private:
         // 1.Setting each value to the mean over some window
         // 2.Rejecting high values (eg. > 3m)
 
-        // Proprocessing to average every 5 beams
         int size = ranges.size();
+        if (size == 0) {
+            RCLCPP_WARN(this->get_logger(), "Empty ranges received in preprocess_lidar.");
+            return;
+        }
 
         // Step 1: Convert NaNs and infinity values to 0.0
         for (int i = 0; i < size; ++i) {
-            if (std::isnan(ranges[i]) || std::isinf(ranges[i])) {
+            if (std::isnan(ranges[i]) || std::isinf(ranges[i])|| ranges[i] < 0.0f) {
                 ranges[i] = 0.0f;
             }
         }
@@ -124,25 +135,29 @@ private:
 
     void find_max_gap(std::vector<float>& ranges, int* indice, float angle_increment_rad)
     {   
-        // find the closest point
-        float min_value = ranges[0];
-        int min_index = 0;
+        // bounce checking
         int size = ranges.size();
-
-        for (int i = 1; i < size; i++) {
-            if (ranges[i] < min_value) {
-                min_value = ranges[i];
-                min_index = i;
-            }
+        if (size == 0) {
+            RCLCPP_WARN(this->get_logger(), "Empty ranges received in find_max_gap.");
+            indice[0] = 0;
+            indice[1] = 0;
+            return;
         }
-
-        // create the 'bubble' around
-        float bubble_ang_rad = atan2f(static_cast<float>(veh_half_width_),min_value);
+        
+        // Find the closest point safely
+        auto min_iter = std::min_element(ranges.begin(), ranges.end());
+        int min_index = std::distance(ranges.begin(), min_iter);
+        float min_value = *min_iter;
+        
+        // Compute bubble size with safety checks
+        float bubble_ang_rad = std::atan2(veh_half_width_, min_value);
         int bubble_range_index = static_cast<int>(bubble_ang_rad / angle_increment_rad);
-
-        for (int i = min_index-bubble_range_index; i <= min_index+bubble_range_index && i < size; ++i) {
-            ranges[i] = 0.0f;
-        }
+        
+        int start = std::max(0, min_index - bubble_range_index);
+        int end = std::min(size - 1, min_index + bubble_range_index);
+        
+        // Zero out points within the bubble
+        std::fill(ranges.begin() + start, ranges.begin() + end + 1, 0.0f);
 
         // find the longest gap range
         int gap_1_lb = 0;
@@ -153,7 +168,7 @@ private:
         
         int gap_2_rb = size - 1;
         int gap_2_lb = min_index + bubble_range_index + 1;
-        while (ranges[gap_2_lb]==0.0f && gap_1_rb<gap_1_lb) {
+        while (ranges[gap_2_lb]==0.0f && gap_2_lb < gap_2_rb) {
            gap_2_lb++; 
         }
 
@@ -274,37 +289,35 @@ private:
         // double steering_angle = (speed > 0.0) ? atan(yaw_rate_desired * veh_wheelbase_ / speed) : 0.0;
         // double steering_angle = yaw_rate_desired;
 
-        /// TODO: add side protection
 
         // Using PID to generate steering angle command
         double steering_angle = kp_ * angle_error + ki_ * integral + kd_ * (angle_error - prev_error) / time_diff;
 
-        double angle_deg = steering_angle * (180.0 / M_PI);
+        // Clamp steering angle to vehicle's limits
+        const double max_steering_angle = 1.0; 
+        steering_angle = clamp(steering_angle, -max_steering_angle, max_steering_angle);
         
-        // generate desired velocity from steering angle
-        double velocity;
-        if (fabs(angle_deg)>=0.0 && fabs(angle_deg)<=10.0) {
-            velocity = 1.5;
-        } else if (fabs(angle_deg)>10.0 && fabs(angle_deg)<=20.0) {
-            velocity = 1.0;
-        } else {
+        // Determine velocity based on steering angle
+        double angle_deg = steering_angle * (180.0 / M_PI);
+        double velocity = 1.5; // default speed
+        
+        if (std::abs(angle_deg) > 20.0) {
             velocity = 0.5;
+        } else if (std::abs(angle_deg) > 10.0) {
+            velocity = 1.0;
         }
 
+        // Prepare and publish drive message
         auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
+        drive_msg.header.stamp = this->now();
+        drive_msg.header.frame_id = "base_link"; 
         // fill in drive message and publish
         drive_msg.drive.speed = static_cast<float>(velocity);
-        if (side_protect_need)
-        {
-            drive_msg.drive.steering_angle = 0.0;
-            RCLCPP_INFO(this->get_logger(), "side protection on, no steering!");
-        } else {
-            drive_msg.drive.steering_angle = static_cast<float>(steering_angle);
-            RCLCPP_INFO(this->get_logger(), "steering command: %f [deg]", angle_deg);
-        }
+        drive_msg.drive.steering_angle = side_protect_need ? 0.0f : static_cast<float>(steering_angle);
         drive_publisher_ ->publish(drive_msg);
         
-        RCLCPP_INFO(this->get_logger(), "speed command: %f m/s", velocity);
+        RCLCPP_INFO(this->get_logger(), "Published drive command: speed=%.2f m/s, steering=%.2f degrees",
+                drive_msg.drive.speed, angle_deg);
 
         integral += angle_error * dt;
         prev_error = angle_error;
@@ -323,6 +336,7 @@ private:
         // Store the latest scan data
         std::lock_guard<std::mutex> lock(scan_mutex_);
         latest_scan_ = *scan_msg;
+        scan_received_ = true;
     }
 
 
@@ -330,46 +344,49 @@ private:
     {
         // Lock the mutex to safely access the latest scan data
         std::lock_guard<std::mutex> lock(scan_mutex_);
-    
-        // With fixed rate
-        // Process each LiDAR scan as per the Follow Gap algorithm & publish an AckermannDriveStamped Message
 
-        // Find closest point to LiDAR
-
-        // Eliminate all points inside 'bubble' (set them to zero) 
-
-        // Find max length gap 
-
-        // Find the best point in the gap 
-
-        // Publish Drive message
-
-        bool activate_AEB = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
-        if (!latest_scan_.ranges.empty() && !AEB_on_ && !activate_AEB)
-        {
-            preprocess_lidar(latest_scan_.ranges);
-            int gap_indice[2] = {0, static_cast<int>(latest_scan_.ranges.size())};
-            // Find max length gap 
-            find_max_gap(latest_scan_.ranges, gap_indice, latest_scan_.angle_increment);
-            // Find the best point in the gap
-            int goal_index = find_best_point(latest_scan_.ranges, gap_indice);
-            
-            // Get the error between vehicle heading and goal direction
-            float delta_theta = latest_scan_.angle_min + goal_index * latest_scan_.angle_increment;
-            RCLCPP_INFO(this->get_logger(), "goal angel: %f [deg]", delta_theta * (180 / M_PI));
-
-            // Publish Drive message
-            bool activate_side_protect = side_protection(latest_scan_.ranges, latest_scan_.angle_min,
-                                                         latest_scan_.angle_increment);
-            control_command(delta_theta, dt, activate_side_protect);
-        } else {
-            auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
-            drive_msg.drive.speed = 0.0;
-            drive_msg.drive.steering_angle = 0.0;
-            drive_publisher_ ->publish(drive_msg);
-            AEB_on_ = true;
+        if (!scan_received_) {
+            RCLCPP_WARN(this->get_logger(), "No scan data received yet. Skipping control computation.");
+            return;
+        }
+        
+        if (latest_scan_.ranges.empty()) {
+            RCLCPP_WARN(this->get_logger(), "Received empty scan data. Skipping control computation.");
+            return;
         }
 
+        bool activate_AEB = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
+
+        if (activate_AEB) {
+            AEB_on_ = true;
+        // } else if (AEB_on_) {
+        //     // Check if conditions have improved to deactivate AEB
+        //     AEB_on_ = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
+        }
+        
+        if (AEB_on_) {
+            auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
+            drive_msg.header.stamp = this->now();
+            drive_msg.header.frame_id = "base_link";
+            drive_msg.drive.speed = 0.0;
+            drive_msg.drive.steering_angle = 0.0;
+            drive_publisher_->publish(drive_msg);
+            // RCLCPP_WARN(this->get_logger(), "Emergency Brake Activated!");
+            return;
+        }
+        
+        preprocess_lidar(latest_scan_.ranges);
+        int gap_indices[2] = {0, static_cast<int>(latest_scan_.ranges.size() - 1)};
+        
+        find_max_gap(latest_scan_.ranges, gap_indices, latest_scan_.angle_increment);
+        int goal_index = find_best_point(latest_scan_.ranges, gap_indices);
+        
+        float delta_theta = latest_scan_.angle_min + goal_index * latest_scan_.angle_increment;
+        RCLCPP_INFO(this->get_logger(), "Goal point: index=%d, angle=%.2f degrees",
+                goal_index, delta_theta * (180.0 / M_PI));
+        bool activate_side_protect = side_protection(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
+        
+        control_command(delta_theta, dt, activate_side_protect);
     }
 };
 
