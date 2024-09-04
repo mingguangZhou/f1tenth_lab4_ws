@@ -4,4 +4,4 @@ reactive_node:
     ki: 0.0
     kd: 0.1
     ttc_threshold_sec: 0.3
-    side_limit_m: 0.5
+    side_limit_m: 0.4

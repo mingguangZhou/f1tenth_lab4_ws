@@ -133,7 +133,7 @@ private:
         }
     }
 
-    void find_max_gap(std::vector<float>& ranges, int* indice, float angle_increment_rad)
+    void find_max_gap(std::vector<float>& ranges, int* indice, float angle_min, float angle_increment_rad)
     {   
         // bounce checking
         int size = ranges.size();
@@ -144,10 +144,18 @@ private:
             return;
         }
         
-        // Find the closest point safely
-        auto min_iter = std::min_element(ranges.begin(), ranges.end());
+        // Find the closest point safely within the 'front window'
+
+        float window_range = 2 * M_PI / 3;
+        int window_start_index = static_cast<int>(((-window_range/2)-angle_min)/angle_increment_rad) - 1;
+        int window_end_index = static_cast<int>(((window_range/2)-angle_min)/angle_increment_rad) - 1;
+
+        auto min_iter = std::min_element(ranges.begin() + window_start_index, ranges.begin() + window_end_index);
         int min_index = std::distance(ranges.begin(), min_iter);
         float min_value = *min_iter;
+
+        RCLCPP_INFO(this->get_logger(), "Min dist %f [m] at %f [deg]", 
+                    min_value, (angle_min + angle_increment_rad * min_index)*(180.0 / M_PI));
         
         // Compute bubble size with safety checks
         float bubble_ang_rad = std::atan2(veh_half_width_, min_value);
@@ -182,6 +190,11 @@ private:
             indice[0] = gap_1_lb;
             indice[1] = gap_1_rb;
         }
+
+        RCLCPP_INFO(this->get_logger(), "Max gap at (%f , %f) [deg]", 
+                    (angle_min + angle_increment_rad * indice[0])*(180.0 / M_PI),
+                    (angle_min + angle_increment_rad * indice[1])*(180.0 / M_PI));
+
     }
 
     int find_max_dist_point(std::vector<float>& ranges, int* indice)
@@ -386,7 +399,7 @@ private:
         
         int gap_indices[2] = {0, static_cast<int>(latest_scan_.ranges.size() - 1)};
         
-        find_max_gap(latest_scan_.ranges, gap_indices, latest_scan_.angle_increment);
+        find_max_gap(latest_scan_.ranges, gap_indices, latest_scan_.angle_min, latest_scan_.angle_increment);
         int goal_index = find_max_dist_point(latest_scan_.ranges, gap_indices);
         // int goal_index = find_mid_point(gap_indices);
         
