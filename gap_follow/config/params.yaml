@@ -2,6 +2,6 @@ reactive_node:
   ros__parameters:
     kp: 1.5
     ki: 0.0
-    kd: 0.05
-    ttc_threshold_sec: 0.5
-    side_limit_m: 0.6
+    kd: 0.1
+    ttc_threshold_sec: 0.3
+    side_limit_m: 0.5

@@ -110,13 +110,13 @@ private:
             }
         }
 
-        // Step 2: Average each 5 beams, ignoring 0.0 values, and replace all 5 beams with the average
-        for (int i = 0; i < size; i += 5) {
+        // Step 2: Average each 10 beams, ignoring 0.0 values, and replace all 10 beams with the average
+        for (int i = 0; i < size; i += 10) {
             float sum = 0.0f;
             int count = 0;
             
             // Calculate the sum and count of non-zero values in the group
-            for (int j = i; j < i + 5 && j < size; ++j) {
+            for (int j = i; j < i + 10 && j < size; ++j) {
                 if (ranges[j] != 0.0f) {
                     sum += ranges[j];
                     ++count;
@@ -127,7 +127,7 @@ private:
             float average = (count > 0) ? sum / count : 0.0f;
             
             // Replace all values in the current group with the average
-            for (int j = i; j < i + 5 && j < size; ++j) {
+            for (int j = i; j < i + 10 && j < size; ++j) {
                 ranges[j] = average;
             }
         }
@@ -184,7 +184,7 @@ private:
         }
     }
 
-    int find_best_point(std::vector<float>& ranges, int* indice)
+    int find_max_dist_point(std::vector<float>& ranges, int* indice)
     {   
         // Start_i & end_i are start and end indicies of max-gap range, respectively
         // Return index of best point in ranges
@@ -200,6 +200,12 @@ private:
         }
         
         return max_dist_index;
+    }
+
+    int find_mid_point(int* indice)
+    {
+        int mid_point = (indice[0] + indice[1]) / 2;
+        return mid_point;
     }
 
     bool emergency_brake(std::vector<float>& ranges, float angle_min, float angle_increment)
@@ -221,10 +227,10 @@ private:
         // Get the TTC array
         std::vector<float> TTC_array(size);
         for (int i = 0; i < size; ++i) {
-            if (std::isnan(ranges[i])) {
+            if (std::isnan(ranges[i])|| ranges[i] <= 0.0f) {
                 TTC_array[i] = std::numeric_limits<float>::infinity();
             } else {
-                TTC_array[i] = (range_rates[i] != 0) ? ranges[i] / range_rates[i] : std::numeric_limits<float>::infinity();
+                TTC_array[i] = (range_rates[i] != 0) ? (ranges[i] / range_rates[i]) : std::numeric_limits<float>::infinity();
             }
         }
 
@@ -241,8 +247,9 @@ private:
 
         if (min_value <= static_cast<float>(ttc_threshold_sec_))
         {
-            float AEB_angle = (angle_min + min_index * (angle_increment)) * (180.0 / M_PI);
-            RCLCPP_INFO(this->get_logger(), "AEB on with TTC:  %f [sec] at the angle %f [deg]", min_value, AEB_angle);
+            float AEB_angle = (angle_min + (min_index * angle_increment)) * (180.0 / M_PI);
+            RCLCPP_INFO(this->get_logger(), "AEB on with TTC:  %f [sec] at the angle %f [deg], with dist %f [m] at index %d, of range rate %f [m/s]", 
+                        min_value, AEB_angle, ranges[min_index], min_index, range_rates[min_index]);
             return true;
         } else {
             return false;
@@ -355,31 +362,33 @@ private:
             return;
         }
 
-        bool activate_AEB = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
-
-        if (activate_AEB) {
-            AEB_on_ = true;
-        // } else if (AEB_on_) {
-        //     // Check if conditions have improved to deactivate AEB
-        //     AEB_on_ = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
-        }
-        
-        if (AEB_on_) {
-            auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
-            drive_msg.header.stamp = this->now();
-            drive_msg.header.frame_id = "base_link";
-            drive_msg.drive.speed = 0.0;
-            drive_msg.drive.steering_angle = 0.0;
-            drive_publisher_->publish(drive_msg);
-            // RCLCPP_WARN(this->get_logger(), "Emergency Brake Activated!");
-            return;
-        }
-        
         preprocess_lidar(latest_scan_.ranges);
+        
+        // bool activate_AEB = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
+
+        // if (activate_AEB) {
+        //     AEB_on_ = true;
+        // // } else if (AEB_on_) {
+        // //     // Check if conditions have improved to deactivate AEB
+        // //     AEB_on_ = emergency_brake(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
+        // }
+        
+        // if (AEB_on_) {
+        //     auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
+        //     drive_msg.header.stamp = this->now();
+        //     drive_msg.header.frame_id = "base_link";
+        //     drive_msg.drive.speed = 0.0;
+        //     drive_msg.drive.steering_angle = 0.0;
+        //     drive_publisher_->publish(drive_msg);
+        //     // RCLCPP_WARN(this->get_logger(), "Emergency Brake Activated!");
+        //     return;
+        // }
+        
         int gap_indices[2] = {0, static_cast<int>(latest_scan_.ranges.size() - 1)};
         
         find_max_gap(latest_scan_.ranges, gap_indices, latest_scan_.angle_increment);
-        int goal_index = find_best_point(latest_scan_.ranges, gap_indices);
+        int goal_index = find_max_dist_point(latest_scan_.ranges, gap_indices);
+        // int goal_index = find_mid_point(gap_indices);
         
         float delta_theta = latest_scan_.angle_min + goal_index * latest_scan_.angle_increment;
         RCLCPP_INFO(this->get_logger(), "Goal point: index=%d, angle=%.2f degrees",
