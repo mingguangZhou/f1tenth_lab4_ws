@@ -6,3 +6,4 @@ reactive_node:
     ttc_threshold_sec: 0.3
     side_limit_m: 0.4
     window_index: 0.66
+    counter_steer_deg: 5.0

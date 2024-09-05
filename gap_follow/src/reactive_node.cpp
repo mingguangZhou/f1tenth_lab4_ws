@@ -40,6 +40,7 @@ public:
         this->declare_parameter<double>("ttc_threshold_sec", 0.0);
         this->declare_parameter<double>("side_limit_m", 0.0);
         this->declare_parameter<double>("window_index", 0.0);
+        this->declare_parameter<double>("counter_steer_deg", 0.0);
 
 
         // Get parameters from the parameter server (YAML file)
@@ -50,10 +51,7 @@ public:
         ttc_threshold_sec_ = this->get_parameter("ttc_threshold_sec").as_double();
         side_limit_m_ = this->get_parameter("side_limit_m").as_double();
         window_index_ = this->get_parameter("window_index").as_double();
-
-        RCLCPP_INFO(this->get_logger(), "PID parameters loaded: kp=%f, ki=%f, kd=%f", kp_, ki_, kd_);
-        RCLCPP_INFO(this->get_logger(), "Side Protection parameters loaded: ttc_threshold_sec=%f, side_limit_m=%f, window_index=%f ",
-                    ttc_threshold_sec_, side_limit_m_, window_index_);
+        counter_steer_deg_ = this->get_parameter("counter_steer_deg").as_double();
     }
 
 private:
@@ -62,7 +60,8 @@ private:
     bool AEB_on_ = false; 
 
     double veh_half_width_ = 0.15; // 296mm wide for Traxxas Slash 4x4 Premium Chassis
-    double veh_wheelbase_ = 0.32; //
+    double veh_wheelbase_ = 0.32; 
+    double steering_correction_ = 0.0;
     double dt = 0.05;
     double speed_curr = 0.0;
 
@@ -75,6 +74,7 @@ private:
     double ttc_threshold_sec_;
     double side_limit_m_;
     double window_index_;
+    double counter_steer_deg_;
 
     double prev_error = 0.0;
     double integral = 0.0;
@@ -272,9 +272,9 @@ private:
         }
     }
 
-    bool side_protection(std::vector<float>& ranges, float angle_min, float angle_increment)
+    bool side_protection(std::vector<float>& ranges, float angle_min, float angle_increment, double& steering_correction)
     {
-        // set up a scan angels array
+        // set up a scan angles array
         int size = ranges.size();
         std::vector<float> scan_angles(size);
         for (int i = 0; i < size; ++i) 
@@ -282,28 +282,39 @@ private:
             scan_angles[i] = angle_min + i * angle_increment;
         }
 
-        for (int i = 0; scan_angles[i]<(-M_PI/2); i++) 
+        // Right side protection: Too close on the right (-π/2 and below), steer left (positive correction)
+        for (int i = 0; scan_angles[i] < (-M_PI / 2); i++) 
         {
-            if (!std::isnan(ranges[i]) && (ranges[i]>0.0) && (ranges[i] <= side_limit_m_)) 
+            if (!std::isnan(ranges[i]) && (ranges[i] > 0.0) && (ranges[i] <= side_limit_m_)) 
             {
-                RCLCPP_INFO(this->get_logger(), "Too close at %f [deg] with dist %f [m]", 
-                            scan_angles[i]*(180.0 / M_PI), ranges[i]);
+                RCLCPP_INFO(this->get_logger(), "Too close on the right at %f [deg] with dist %f [m]", 
+                            scan_angles[i] * (180.0 / M_PI), ranges[i]);
+
+                // Apply a left counter-steer (positive angle)
+                steering_correction = counter_steer_deg_ * (M_PI / 180);
                 return true;
             }
         }
 
-        for (int j = size - 1; scan_angles[j]>(M_PI/2); j--) 
+        // Left side protection: Too close on the left (π/2 and above), steer right (negative correction)
+        for (int j = size - 1; scan_angles[j] > (M_PI / 2); j--) 
         {
-            if (!std::isnan(ranges[j]) && (ranges[j]>0.0) && (ranges[j] <= side_limit_m_))
+            if (!std::isnan(ranges[j]) && (ranges[j] > 0.0) && (ranges[j] <= side_limit_m_))
             {
-                RCLCPP_INFO(this->get_logger(), "Too close at %f [deg] with dist %f [m]", 
-                            scan_angles[j]*(180.0 / M_PI), ranges[j]);
+                RCLCPP_INFO(this->get_logger(), "Too close on the left at %f [deg] with dist %f [m]", 
+                            scan_angles[j] * (180.0 / M_PI), ranges[j]);
+
+                // Apply a right counter-steer (negative angle)
+                steering_correction = - counter_steer_deg_ * (M_PI / 180);;
                 return true;
             }
         }
 
+        // No side protection needed
+        steering_correction = 0.0;
         return false;
     }
+
 
     void control_command(float angle_error, double time_diff, bool side_protect_need)
     {   
@@ -336,7 +347,8 @@ private:
         drive_msg.header.frame_id = "base_link"; 
         // fill in drive message and publish
         drive_msg.drive.speed = static_cast<float>(velocity);
-        drive_msg.drive.steering_angle = side_protect_need ? 0.0f : static_cast<float>(steering_angle);
+        drive_msg.drive.steering_angle = side_protect_need ? 
+            static_cast<float>(steering_correction_) : static_cast<float>(steering_angle);
         drive_publisher_ ->publish(drive_msg);
         
         RCLCPP_INFO(this->get_logger(), "Published drive command: speed=%.2f m/s, steering=%.2f degrees",
@@ -409,7 +421,7 @@ private:
         float delta_theta = latest_scan_.angle_min + goal_index * latest_scan_.angle_increment;
         RCLCPP_INFO(this->get_logger(), "Goal point: index=%d, angle=%.2f degrees",
                 goal_index, delta_theta * (180.0 / M_PI));
-        bool activate_side_protect = side_protection(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment);
+        bool activate_side_protect = side_protection(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment, steering_correction_);
         
         control_command(delta_theta, dt, activate_side_protect);
     }
