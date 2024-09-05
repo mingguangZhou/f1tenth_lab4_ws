@@ -39,6 +39,7 @@ public:
         this->declare_parameter<double>("kd", 0.0);
         this->declare_parameter<double>("ttc_threshold_sec", 0.0);
         this->declare_parameter<double>("side_limit_m", 0.0);
+        this->declare_parameter<double>("window_index", 0.0);
 
 
         // Get parameters from the parameter server (YAML file)
@@ -48,10 +49,11 @@ public:
 
         ttc_threshold_sec_ = this->get_parameter("ttc_threshold_sec").as_double();
         side_limit_m_ = this->get_parameter("side_limit_m").as_double();
+        window_index_ = this->get_parameter("window_index").as_double();
 
         RCLCPP_INFO(this->get_logger(), "PID parameters loaded: kp=%f, ki=%f, kd=%f", kp_, ki_, kd_);
-        RCLCPP_INFO(this->get_logger(), "Side Protection parameters loaded: ttc_threshold_sec=%f, side_limit_m=%f",
-                    ttc_threshold_sec_, side_limit_m_);
+        RCLCPP_INFO(this->get_logger(), "Side Protection parameters loaded: ttc_threshold_sec=%f, side_limit_m=%f, window_index=%f ",
+                    ttc_threshold_sec_, side_limit_m_, window_index_);
     }
 
 private:
@@ -72,6 +74,7 @@ private:
     // Protection PARAMS
     double ttc_threshold_sec_;
     double side_limit_m_;
+    double window_index_;
 
     double prev_error = 0.0;
     double integral = 0.0;
@@ -146,7 +149,7 @@ private:
         
         // Find the closest point safely within the 'front window'
 
-        float window_range = 2 * M_PI / 3;
+        float window_range = M_PI * window_index_;
         int window_start_index = static_cast<int>(((-window_range/2)-angle_min)/angle_increment_rad) - 1;
         int window_end_index = static_cast<int>(((window_range/2)-angle_min)/angle_increment_rad) - 1;
 
