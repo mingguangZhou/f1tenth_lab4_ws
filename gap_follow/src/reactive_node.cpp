@@ -37,11 +37,16 @@ public:
         this->declare_parameter<double>("kp", 0.0);
         this->declare_parameter<double>("ki", 0.0);
         this->declare_parameter<double>("kd", 0.0);
+
         this->declare_parameter<double>("ttc_threshold_sec", 0.0);
         this->declare_parameter<double>("side_limit_m", 0.0);
-        this->declare_parameter<double>("window_index", 0.0);
+        this->declare_parameter<double>("bubble_window_deg", 0.0);
         this->declare_parameter<double>("counter_steer_deg", 0.0);
 
+        this->declare_parameter<double>("speed_high", 0.0);
+        this->declare_parameter<double>("speed_mid", 0.0);
+        this->declare_parameter<double>("speed_low", 0.0);
+        this->declare_parameter<double>("goal_window_deg", 0.0);
 
         // Get parameters from the parameter server (YAML file)
         kp_ = this->get_parameter("kp").as_double();
@@ -50,8 +55,13 @@ public:
 
         ttc_threshold_sec_ = this->get_parameter("ttc_threshold_sec").as_double();
         side_limit_m_ = this->get_parameter("side_limit_m").as_double();
-        window_index_ = this->get_parameter("window_index").as_double();
+        bubble_window_deg_ = this->get_parameter("bubble_window_deg").as_double();
         counter_steer_deg_ = this->get_parameter("counter_steer_deg").as_double();
+
+        speed_high_ = this->get_parameter("speed_high").as_double();
+        speed_mid_ = this->get_parameter("speed_mid").as_double();
+        speed_low_ = this->get_parameter("speed_low").as_double();
+        goal_window_deg_ = this->get_parameter("goal_window_deg").as_double();
     }
 
 private:
@@ -73,8 +83,14 @@ private:
     // Protection PARAMS
     double ttc_threshold_sec_;
     double side_limit_m_;
-    double window_index_;
+    double bubble_window_deg_;
     double counter_steer_deg_;
+
+    // Speed and performance
+    double speed_high_;
+    double speed_mid_;
+    double speed_low_;
+    double goal_window_deg_;
 
     double prev_error = 0.0;
     double integral = 0.0;
@@ -149,7 +165,7 @@ private:
         
         // Find the closest point safely within the 'front window'
 
-        float window_range = M_PI * window_index_;
+        float window_range = bubble_window_deg_ * (M_PI / 180);
         int window_start_index = static_cast<int>(((-window_range/2)-angle_min)/angle_increment_rad) - 1;
         int window_end_index = static_cast<int>(((window_range/2)-angle_min)/angle_increment_rad) - 1;
 
@@ -333,12 +349,12 @@ private:
         
         // Determine velocity based on steering angle
         double angle_deg = steering_angle * (180.0 / M_PI);
-        double velocity = 1.5; // default speed
+        double velocity = speed_high_; // default speed
         
         if (std::abs(angle_deg) > 20.0) {
-            velocity = 0.5;
+            velocity = speed_low_;
         } else if (std::abs(angle_deg) > 10.0) {
-            velocity = 1.0;
+            velocity = speed_mid_;
         }
 
         // Prepare and publish drive message
