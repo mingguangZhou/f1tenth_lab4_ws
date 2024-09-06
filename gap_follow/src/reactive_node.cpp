@@ -216,7 +216,7 @@ private:
 
     }
 
-    int find_max_dist_point(std::vector<float>& ranges, int* indice)
+    int find_max_dist_point(std::vector<float>& ranges, const std::vector<float>& scan_angles, int* indice, float angle_increment)
     {   
         // Start_i & end_i are start and end indicies of max-gap range, respectively
         // Return index of best point in ranges
@@ -224,14 +224,30 @@ private:
         float max_dist = ranges[indice[0]];
         int max_dist_index = indice[0];
 
-        for (int i = indice[0]+1; i <= indice[1]; i++) {
-            if (ranges[i] > max_dist) {
+        for (int i = indice[0]+1; i < indice[1]; i++) 
+        {
+            if (ranges[i] > max_dist) 
+            {
                 max_dist = ranges[i];
                 max_dist_index = i;
             }
         }
+
+        // Smooth the turn by find the mininum angle in a angle range
+        int window_lb_index = max_dist_index - ((goal_window_deg_/2) * (M_PI / 180.0) / angle_increment);
+        int window_rb_index = max_dist_index + ((goal_window_deg_/2) * (M_PI / 180.0) / angle_increment);
+        // find the minimum angle so that with minimum effort to turn
+        int best_point_index = window_lb_index;
+        for (int j = window_lb_index+1; j < window_rb_index; j++)
+        {
+            if (std::abs(scan_angles[j]) < std::abs(scan_angles[best_point_index]))
+            {
+               best_point_index = j; 
+            }
+        }
+        best_point_index = clamp(best_point_index, indice[0], indice[1]);
         
-        return max_dist_index;
+        return best_point_index;
     }
 
     int find_mid_point(int* indice)
@@ -240,16 +256,10 @@ private:
         return mid_point;
     }
 
-    bool emergency_brake(std::vector<float>& ranges, float angle_min, float angle_increment)
+    bool emergency_brake(std::vector<float>& ranges, const std::vector<float>& scan_angles)
     {
-        int size = ranges.size();
-        std::vector<float> scan_angles(size);
-        for (int i = 0; i < size; ++i) 
-        {
-            scan_angles[i] = angle_min + i * angle_increment;
-        }
-
         // Get the array of range rates
+        int size = scan_angles.size();
         std::vector<float> range_rates(size);
         for (int i = 0; i < size; ++i) 
         {
@@ -279,7 +289,7 @@ private:
 
         if (min_value <= static_cast<float>(ttc_threshold_sec_))
         {
-            float AEB_angle = (angle_min + (min_index * angle_increment)) * (180.0 / M_PI);
+            float AEB_angle = scan_angles[min_index] * (180.0 / M_PI);
             RCLCPP_INFO(this->get_logger(), "AEB on with TTC:  %f [sec] at the angle %f [deg], with dist %f [m] at index %d, of range rate %f [m/s]", 
                         min_value, AEB_angle, ranges[min_index], min_index, range_rates[min_index]);
             return true;
@@ -288,16 +298,9 @@ private:
         }
     }
 
-    bool side_protection(std::vector<float>& ranges, float angle_min, float angle_increment, double& steering_correction)
+    bool side_protection(std::vector<float>& ranges, const std::vector<float>& scan_angles, double& steering_correction)
     {
-        // set up a scan angles array
-        int size = ranges.size();
-        std::vector<float> scan_angles(size);
-        for (int i = 0; i < size; ++i) 
-        {
-            scan_angles[i] = angle_min + i * angle_increment;
-        }
-
+        int size = scan_angles.size();
         // Right side protection: Too close on the right (-π/2 and below), steer left (positive correction)
         for (int i = 0; scan_angles[i] < (-M_PI / 2); i++) 
         {
@@ -429,15 +432,23 @@ private:
         // }
         
         int gap_indices[2] = {0, static_cast<int>(latest_scan_.ranges.size() - 1)};
-        
+
+        // set up a scan angles array
+        int size = latest_scan_.ranges.size();
+        std::vector<float> lidar_scan_angles(size);
+        for (int i = 0; i < size; ++i) 
+        {
+            lidar_scan_angles[i] = latest_scan_.angle_min + i * latest_scan_.angle_increment;
+        }
+
         find_max_gap(latest_scan_.ranges, gap_indices, latest_scan_.angle_min, latest_scan_.angle_increment);
-        int goal_index = find_max_dist_point(latest_scan_.ranges, gap_indices);
+        int goal_index = find_max_dist_point(latest_scan_.ranges, lidar_scan_angles, gap_indices, latest_scan_.angle_increment);
         // int goal_index = find_mid_point(gap_indices);
         
-        float delta_theta = latest_scan_.angle_min + goal_index * latest_scan_.angle_increment;
+        float delta_theta = lidar_scan_angles[goal_index];
         RCLCPP_INFO(this->get_logger(), "Goal point: index=%d, angle=%.2f degrees",
                 goal_index, delta_theta * (180.0 / M_PI));
-        bool activate_side_protect = side_protection(latest_scan_.ranges, latest_scan_.angle_min, latest_scan_.angle_increment, steering_correction_);
+        bool activate_side_protect = side_protection(latest_scan_.ranges, lidar_scan_angles, steering_correction_);
         
         control_command(delta_theta, dt, activate_side_protect);
     }
